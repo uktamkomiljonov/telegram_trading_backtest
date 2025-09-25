@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Trading Backtest Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .dashboard { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+        .header {
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+
+        .header h1 { color: #667eea; font-size: 2.5em; margin-bottom: 10px; }
+
+        .status-bar { display:flex; gap:20px; flex-wrap:wrap; margin-top:20px; align-items:center; }
+
+        .status-item { display:flex; align-items:center; gap:8px; padding:10px 15px; background: rgba(102,126,234,0.08); border-radius:8px; }
+
+        .status-indicator { width:10px; height:10px; border-radius:50%; background:#4ade80; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%{opacity:1;} 50%{opacity:0.5;} 100%{opacity:1;} }
+
+        .stats-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); gap:20px; margin-bottom:30px; }
+
+        .stat-card {
+            background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); border-radius:15px; padding:25px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1); transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .stat-card:hover { transform: translateY(-5px); box-shadow: 0 15px 50px rgba(0,0,0,0.15); }
+
+        .stat-label { color:#64748b; font-size:0.9em; margin-bottom:8px; text-transform:uppercase; letter-spacing:1px; }
+        .stat-value { font-size:2em; font-weight:bold; background: linear-gradient(135deg,#667eea 0%,#764ba2 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+        .stat-value.positive { background: linear-gradient(135deg,#4ade80 0%,#22c55e 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+        .stat-value.negative { background: linear-gradient(135deg,#f87171 0%,#ef4444 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+
+        .chart-container {
+            background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); border-radius:15px; padding:25px;
+            margin-bottom:30px; box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            /* give chart a stable height so Chart.js can compute sizing when maintainAspectRatio:false */
+            height: 360px;
+            position: relative;
+        }
+
+        /* make canvas fill the container and allow Chart.js to control drawing height */
+        .chart-container canvas { width: 100% !important; height: 100% !important; display:block; }
+
+        .chart-title { font-size:1.3em; color:#333; margin-bottom:20px; font-weight:600; }
+
+        .trades-table {
+            background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); border-radius:15px; padding:25px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1); overflow-x:auto;
+        }
+
+        table { width:100%; border-collapse:collapse; }
+        th { text-align:left; padding:12px; color:#64748b; font-size:0.85em; text-transform:uppercase; letter-spacing:1px; border-bottom:2px solid #e2e8f0; }
+        td { padding:12px; border-bottom:1px solid #f1f5f9; }
+        tr:hover { background: rgba(102,126,234,0.03); }
+        .trade-profit { color:#22c55e; font-weight:600; }
+        .trade-loss { color:#ef4444; font-weight:600; }
+
+        .loading { display:flex; justify-content:center; align-items:center; min-height:200px; }
+        .spinner { width:50px; height:50px; border:5px solid rgba(102,126,234,0.2); border-top:5px solid #667eea; border-radius:50%; animation:spin 1s linear infinite; }
+        @keyframes spin { 0%{transform:rotate(0);} 100%{transform:rotate(360deg);} }
+
+        .refresh-btn { background: linear-gradient(135deg,#667eea 0%,#764ba2 100%); color:white; border:none; padding:12px 24px; border-radius:8px; cursor:pointer; font-size:1em; font-weight:600; transition: transform 0.2s ease; }
+        .refresh-btn:hover { transform:scale(1.05); }
+        .refresh-btn:active { transform:scale(0.95); }
+
+        /* small screens fix */
+        @media (max-width:600px) {
+            .chart-container { height: 300px; padding:16px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="header">
+            <h1>📈 Trading Backtest Dashboard</h1>
+            <div class="status-bar">
+                <div class="status-item">
+                    <div class="status-indicator"></div>
+                    <span>System Running</span>
+                </div>
+                <div class="status-item"><span>Channel: <strong id="channel-name">Loading...</strong></span></div>
+                <div class="status-item"><span>TP: <strong id="tp-value">10%</strong></span></div>
+                <div class="status-item"><span>SL: <strong id="sl-value">6.67%</strong></span></div>
+                <button class="refresh-btn" onclick="refreshData()">🔄 Refresh</button>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card"><div class="stat-label">Total Trades</div><div class="stat-value" id="total-trades">0</div></div>
+            <div class="stat-card"><div class="stat-label">Win Rate</div><div class="stat-value" id="win-rate">0%</div></div>
+            <div class="stat-card"><div class="stat-label">Total P&L</div><div class="stat-value" id="total-pnl">$0</div></div>
+            <div class="stat-card"><div class="stat-label">ROI</div><div class="stat-value" id="roi">0%</div></div>
+            <div class="stat-card"><div class="stat-label">Profit Factor</div><div class="stat-value" id="profit-factor">0</div></div>
+            <div class="stat-card"><div class="stat-label">Max Drawdown</div><div class="stat-value negative" id="max-drawdown">0%</div></div>
+        </div>
+
+        <div class="chart-container">
+            <h2 class="chart-title">Cumulative P&L Chart</h2>
+            <canvas id="pnl-chart" aria-label="Cumulative P&L chart" role="img"></canvas>
+        </div>
+
+        <div class="trades-table">
+            <h2 class="chart-title">Recent Trades</h2>
+            <div id="trades-container">
+                <div class="loading"><div class="spinner"></div></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let pnlChart = null;
+        const API_BASE = ''; // empty => relative paths like /api/...
+
+        async function fetchData(endpoint) {
+            try {
+                const resp = await fetch(`${API_BASE}/api/${endpoint}`);
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    throw new Error(`HTTP ${resp.status}: ${txt}`);
+                }
+                return await resp.json();
+            } catch (err) {
+                console.error(`Error fetching ${endpoint}:`, err);
+                return null;
+            }
+        }
+
+        function safeNumber(v, fallback = 0) {
+            // Converts strings -> numbers and handles null/undefined
+            const n = Number(v);
+            return Number.isFinite(n) ? n : fallback;
+        }
+
+        async function updateStatistics() {
+            const stats = await fetchData('statistics');
+            if (!stats) return;
+
+            document.getElementById('total-trades').textContent = stats.total_trades ?? 0;
+            document.getElementById('win-rate').textContent = `${stats.win_rate ?? 0}%`;
+
+            const pnlElement = document.getElementById('total-pnl');
+            const totalPnl = safeNumber(stats.total_pnl, 0);
+            pnlElement.textContent = `$${totalPnl.toFixed(2)}`;
+            pnlElement.className = totalPnl >= 0 ? 'stat-value positive' : 'stat-value negative';
+
+            const roiElement = document.getElementById('roi');
+            const roi = safeNumber(stats.roi, 0);
+            roiElement.textContent = `${roi.toFixed(2)}%`;
+            roiElement.className = roi >= 0 ? 'stat-value positive' : 'stat-value negative';
+
+            document.getElementById('profit-factor').textContent = stats.profit_factor ?? 0;
+            document.getElementById('max-drawdown').textContent = `${stats.max_drawdown_pct ?? 0}%`;
+        }
+
+        async function updateChart() {
+            const chartData = await fetchData('chart-data');
+            if (!chartData || !Array.isArray(chartData.labels) || chartData.labels.length === 0) {
+                // if chartData missing, clear chart area
+                if (pnlChart) {
+                    pnlChart.destroy();
+                    pnlChart = null;
+                }
+                return;
+            }
+
+            const ctx = document.getElementById('pnl-chart').getContext('2d');
+
+            // convert cumulative_pnl into numbers defensively
+            const cumulative = (chartData.cumulative_pnl || []).map(v => safeNumber(v, 0));
+
+            if (pnlChart) pnlChart.destroy();
+
+            pnlChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: chartData.labels,
+                    datasets: [{
+                        label: 'Cumulative P&L',
+                        data: cumulative,
+                        borderColor: 'rgb(102, 126, 234)',
+                        backgroundColor: 'rgba(102, 126, 234, 0.12)',
+                        tension: 0.35,
+                        fill: true,
+                        pointRadius: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { display: true, ticks: { maxRotation:45, autoSkip: true } },
+                        y: {
+                            beginAtZero: false, // allow negative cumulative pnl
+                            ticks: {
+                                callback: function(value) {
+                                    // value might be string in some Chart versions, coerce to number
+                                    const num = Number(value);
+                                    if (!Number.isFinite(num)) return String(value);
+                                    return '$' + num.toFixed(2);
+                                }
+                            }
+                        }
+                    },
+                    interaction: { intersect: false, mode: 'index' },
+                    elements: { line: { tension: 0.35 } }
+                }
+            });
+        }
+
+        async function updateTrades() {
+            const trades = await fetchData('trades?limit=20');
+            const container = document.getElementById('trades-container');
+
+            // show spinner if data is null
+            if (!trades) {
+                container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+                return;
+            }
+
+            if (Array.isArray(trades) && trades.length > 0) {
+                let html = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Token</th>
+                                <th>Entry Time</th>
+                                <th>Entry Price</th>
+                                <th>Exit Price</th>
+                                <th>Type</th>
+                                <th>P&L</th>
+                                <th>P&L %</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                trades.forEach(trade => {
+                    const pnl = safeNumber(trade.pnl, 0);
+                    const pnlPct = safeNumber(trade.pnl_percentage, 0);
+                    const pnlClass = pnl >= 0 ? 'trade-profit' : 'trade-loss';
+
+                    const entryPrice = Number(trade.entry_price ?? 0).toFixed(4);
+                    const exitPrice = Number(trade.exit_price ?? 0).toFixed(4);
+
+                    html += `
+                        <tr>
+                            <td><strong>${trade.token_symbol ?? 'N/A'}</strong></td>
+                            <td>${trade.entry_time ?? 'N/A'}</td>
+                            <td>$${entryPrice}</td>
+                            <td>$${exitPrice}</td>
+                            <td>${trade.exit_type ?? 'N/A'}</td>
+                            <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
+                            <td class="${pnlClass}">${pnlPct.toFixed(2)}%</td>
+                            <td>${trade.status ?? 'N/A'}</td>
+                        </tr>
+                    `;
+                });
+
+                html += '</tbody></table>';
+                container.innerHTML = html;
+            } else {
+                container.innerHTML = '<p>No trades found</p>';
+            }
+        }
+
+        async function updateSystemStatus() {
+            const status = await fetchData('system-status');
+            if (!status) return;
+            document.getElementById('channel-name').textContent = status.channel_monitored ?? 'N/A';
+            document.getElementById('tp-value').textContent = `${status.take_profit ?? 10}%`;
+            document.getElementById('sl-value').textContent = `${status.stop_loss ?? 6.67}%`;
+        }
+
+        async function refreshData() {
+            // run in parallel
+            await Promise.all([ updateStatistics(), updateChart(), updateTrades(), updateSystemStatus() ]);
+        }
+
+        // initial load
+        refreshData();
+
+        // auto-refresh every 10 seconds
+        setInterval(refreshData, 10000);
+
+        // ensure chart properly resizes on window change
+        window.addEventListener('resize', () => {
+            if (pnlChart) pnlChart.resize();
+        });
+    </script>
+</body>
+</html>
